@@ -73,6 +73,31 @@ protected:
     int showConfigCalls{ 0 };
 };
 
+class MissingRepoCommandTest : public RepoCommandTest,
+                               public ::testing::WithParamInterface<const char *>
+{
+};
+
+TEST_P(MissingRepoCommandTest, ErrorNamesRequestedAlias)
+{
+    parse(GetParam());
+
+    auto ret = handle();
+
+    ASSERT_FALSE(ret.has_value());
+    EXPECT_EQ(ret.error().message(), "the operated repo missing doesn't exist");
+    EXPECT_EQ(setConfigCalls, 0);
+}
+
+INSTANTIATE_TEST_SUITE_P(AliasBasedCommands,
+                         MissingRepoCommandTest,
+                         ::testing::Values("repo remove missing",
+                                           "repo update missing https://new.example",
+                                           "repo set-default missing",
+                                           "repo set-priority missing 42",
+                                           "repo enable-mirror missing",
+                                           "repo disable-mirror missing"));
+
 TEST_F(RepoCommandTest, AddRepoTrimsTrailingSlash)
 {
     parse("repo add community https://community.example/ --alias comm");
@@ -205,3 +230,4 @@ TEST_F(RepoCommandTest, ModifyReturnsError)
 
 } // namespace
 } // namespace linglong::common::cli
+
