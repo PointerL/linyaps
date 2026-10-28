@@ -1,46 +1,69 @@
-name: CLI reproduction (fork only)
+name: Validate mirror completion (fork only)
 
 on:
   pull_request:
     branches: [workflows/cli-probe-base-20261028]
-  push:
-    branches: [workflows/cli-reproduction-20261028]
 
 permissions:
   contents: read
 
 jobs:
-  reproduce:
+  validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build debhelper-compat intltool libcap-dev libcli11-dev libcurl4-openssl-dev libdeflate-dev libelf-dev libexpected-dev libfuse3-dev libglib2.0-dev libgmock-dev libgtest-dev liblz4-dev liblzma-dev libostree-dev libpcre2-dev libselinux1-dev libssl-dev libsystemd-dev libyaml-cpp-dev libzstd-dev nlohmann-json3-dev pkg-config zlib1g-dev libgl1-mesa-dev qt6-base-dev qt6-base-private-dev crun bash-completion
-      - name: Build unmodified ll-builder
-        run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCPM_LOCAL_PACKAGES_ONLY=ON -DENABLE_TESTING=OFF
-          cmake --build build --target ll-builder --parallel 2
-          sudo install -D -m 644 misc/share/linglong/config.yaml /usr/share/linglong/config.yaml
-      - name: Reproduce completion using the real builder
+        with:
+          ref: aa2b82155626339e833c705658e0d7140c3578b1
+          fetch-depth: 0
+      - name: Verify before and after with the same regression tests
         shell: bash
         run: |
+          mkdir -p "$RUNNER_TEMP/baseline-completions"
+          for command in ll-cli ll-builder; do
+            git show 2f080598efef9aa425ec075eeef880711af9fa86:misc/share/bash-completion/completions/$command > "$RUNNER_TEMP/baseline-completions/$command"
+            if bash misc/tests/bash_completion_test.sh "$RUNNER_TEMP/baseline-completions/$command" "$command"; then
+              echo "ERROR: baseline unexpectedly passed"
+              exit 1
+            fi
+            echo "Expected baseline failure confirmed: $command"
+            bash misc/tests/bash_completion_test.sh "misc/share/bash-completion/completions/$command" "$command"
+          done
+      - name: Install build and validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build debhelper-compat intltool libcap-dev libcli11-dev libcurl4-openssl-dev libdeflate-dev libelf-dev libexpected-dev libfuse3-dev libglib2.0-dev libgmock-dev libgtest-dev liblz4-dev liblzma-dev libostree-dev libpcre2-dev libselinux1-dev libssl-dev libsystemd-dev libyaml-cpp-dev libzstd-dev nlohmann-json3-dev pkg-config zlib1g-dev libgl1-mesa-dev qt6-base-dev qt6-base-private-dev erofs-utils erofsfuse python3-venv bash-completion
+      - name: Check changed files using repository hooks
+        run: |
+          python3 -m venv "$RUNNER_TEMP/linyaps-checks"
+          "$RUNNER_TEMP/linyaps-checks/bin/pip" install pre-commit
+          "$RUNNER_TEMP/linyaps-checks/bin/pre-commit" run --files misc/CMakeLists.txt misc/share/bash-completion/completions/ll-cli misc/share/bash-completion/completions/ll-builder misc/tests/bash_completion_test.sh
+          bash -n misc/share/bash-completion/completions/ll-cli misc/share/bash-completion/completions/ll-builder misc/tests/bash_completion_test.sh
+          git diff --exit-code
+      - name: Configure and build the debug preset
+        run: |
+          cmake --preset debug -G Ninja -DCPM_LOCAL_PACKAGES_ONLY=ON
+          cmake --build --preset debug --parallel 2
+      - name: Run the project test preset
+        run: ctest --preset debug --output-on-failure
+      - name: Verify the real builder before and after
+        shell: bash
+        run: |
+          sudo install -D -m 644 misc/share/linglong/config.yaml /usr/share/linglong/config.yaml
           export PATH="$PWD/build/apps/ll-builder:$PATH"
           export XDG_CONFIG_HOME="$RUNNER_TEMP/linyaps-probe-config"
           export XDG_CACHE_HOME="$RUNNER_TEMP/linyaps-probe-cache"
-          command -v ll-builder
           ll-builder --version
           ll-builder repo show
-          source misc/share/bash-completion/completions/ll-builder
-          COMP_WORDS=(ll-builder repo disable-mirror sta)
-          COMP_CWORD=3
-          _ll_builder_complete
-          printf 'disable-mirror completion: <%s>\n' "${COMPREPLY[@]}"
-          [[ " ${COMPREPLY[*]} " == *" stable "* ]]
-          COMP_WORDS=(ll-builder repo enable-mirror sta)
-          COMP_CWORD=3
-          _ll_builder_complete
-          printf 'enable-mirror completion: <%s>\n' "${COMPREPLY[@]}"
-          [[ " ${COMPREPLY[*]} " == *" stable "* ]]
+          for source in "$RUNNER_TEMP/baseline-completions/ll-builder" misc/share/bash-completion/completions/ll-builder; do
+            source "$source"
+            COMP_WORDS=(ll-builder repo enable-mirror sta)
+            COMP_CWORD=3
+            if _ll_builder_complete; then :; else echo "Completion returned nonzero"; fi
+            printf '%s: enable-mirror completion: <%s>\n' "$source" "${COMPREPLY[*]}"
+            if [[ "$source" == "$RUNNER_TEMP/"* ]]; then
+              [[ "${#COMPREPLY[@]}" == 0 ]]
+            else
+              [[ "${COMPREPLY[*]}" == stable ]]
+            fi
+          done
