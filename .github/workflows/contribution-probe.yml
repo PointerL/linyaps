@@ -1,6 +1,8 @@
 name: CLI reproduction (fork only)
 
 on:
+  pull_request:
+    branches: [workflows/cli-probe-base-20261028]
   push:
     branches: [workflows/cli-reproduction-20261028]
 
