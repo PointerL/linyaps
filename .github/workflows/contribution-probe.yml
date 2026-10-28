@@ -1,0 +1,44 @@
+name: CLI reproduction (fork only)
+
+on:
+  push:
+    branches: [workflows/cli-reproduction-20261028]
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build debhelper-compat intltool libcap-dev libcli11-dev libcurl4-openssl-dev libdeflate-dev libelf-dev libexpected-dev libfuse3-dev libglib2.0-dev libgmock-dev libgtest-dev liblz4-dev liblzma-dev libostree-dev libpcre2-dev libselinux1-dev libssl-dev libsystemd-dev libyaml-cpp-dev libzstd-dev nlohmann-json3-dev pkg-config zlib1g-dev libgl1-mesa-dev qt6-base-dev qt6-base-private-dev crun bash-completion
+      - name: Build unmodified ll-builder
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCPM_LOCAL_PACKAGES_ONLY=ON -DENABLE_TESTING=OFF
+          cmake --build build --target ll-builder --parallel 2
+          sudo install -D -m 644 misc/share/linglong/config.yaml /usr/share/linglong/config.yaml
+      - name: Reproduce completion using the real builder
+        shell: bash
+        run: |
+          export PATH="$PWD/build/apps/ll-builder:$PATH"
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/linyaps-probe-config"
+          export XDG_CACHE_HOME="$RUNNER_TEMP/linyaps-probe-cache"
+          command -v ll-builder
+          ll-builder --version
+          ll-builder repo show
+          source misc/share/bash-completion/completions/ll-builder
+          COMP_WORDS=(ll-builder repo disable-mirror sta)
+          COMP_CWORD=3
+          _ll_builder_complete
+          printf 'disable-mirror completion: <%s>\n' "${COMPREPLY[@]}"
+          [[ " ${COMPREPLY[*]} " == *" stable "* ]]
+          COMP_WORDS=(ll-builder repo enable-mirror sta)
+          COMP_CWORD=3
+          _ll_builder_complete
+          printf 'enable-mirror completion: <%s>\n' "${COMPREPLY[@]}"
+          [[ " ${COMPREPLY[*]} " == *" stable "* ]]
